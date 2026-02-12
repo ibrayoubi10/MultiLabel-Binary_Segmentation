@@ -19,7 +19,6 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import types
 import math
 from abc import ABCMeta, abstractmethod
-from mmcv.cnn import ConvModule
 import pdb
 
 
@@ -478,6 +477,6 @@ class UNext_S(nn.Module):
 
 # EOF
 model = UNext(num_classes=1, input_channels=3, deep_supervision=True).cuda()
-inp = torch.rand((2, 3, 224, 224)).cuda()
+inp = torch.rand((6, 3, 224, 224)).cuda()
 out = model(inp)
 print(out.shape)

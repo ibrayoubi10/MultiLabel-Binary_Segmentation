@@ -1,6 +1,7 @@
+import types
+import math
+import os
 
-import torch
-from torch import nn
 import torch
 import torchvision
 from torch import nn
@@ -9,17 +10,15 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.utils import save_image
 import torch.nn.functional as F
-import os
+
 import matplotlib.pyplot as plt
 from utils import *
 __all__ = ['UNext']
 
 import timm
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-import types
-import math
+
 from abc import ABCMeta, abstractmethod
-from mmcv.cnn import ConvModule
 import pdb
 
 
@@ -27,7 +26,16 @@ import pdb
 def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=1, bias=False)
+"""
+en gros ca sert a quoi cette fonctoin? 
+changer le nombre de canaux (ex 64 → 128)
+mélanger l information entre canaux au même pixel
 
+in_planes correspond au Nombre de canaux en entrée (ex: 64).
+out_planes correspond au Nombre de canaux en sortie (ex: 128).
+kernel-size: Filtre 1×1 → chaque pixel de sortie dépend uniquement du même pixel en entrée, mais en combinant tous les canaux.
+le stride est le “pas” de déplacement du filtre convolutionnel. ( ici est de 1 donc il ne saute pas de pixels y aura pas de downsampling)
+"""
 
 # def shift(dim):
 #     x_shift = [ torch.roll(x_c, shift, dim) for x_c, shift in zip(xs, range(-self.pad, self.pad +1))]
@@ -37,6 +45,8 @@ def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
 #     return x_cat
 
 class shiftmlp(nn.Module):
+    # creation d un module PyTorch personnalisé.
+
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., shift_size=5):
         super().__init__()
         out_features = out_features or in_features
@@ -50,7 +60,6 @@ class shiftmlp(nn.Module):
 
         self.shift_size = shift_size
         self.pad = shift_size // 2
-
 
         self.apply(self._init_weights)
 
@@ -255,7 +264,7 @@ class UNext(nn.Module):
         self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2, in_chans=embed_dims[1],
                                               embed_dim=embed_dims[2])
 
-        self.decoder1 = nn.Conv2d(256, 160, 3, stride=1 ,padding=1)
+        self.decoder1 =   nn.Conv2d(256, 160, 3, stride=1 ,padding=1)
         self.decoder2 =   nn.Conv2d(160, 128, 3, stride=1, padding=1)
         self.decoder3 =   nn.Conv2d(128, 32, 3, stride=1, padding=1)
         self.decoder4 =   nn.Conv2d(32, 16, 3, stride=1, padding=1)
@@ -477,6 +486,6 @@ class UNext_S(nn.Module):
 
 # EOF
 model = UNext(num_classes=1, input_channels=3, deep_supervision=True).cuda()
-inp = torch.rand((2, 3, 224, 224)).cuda()
+inp = torch.rand((5, 3, 224, 224)).cuda()
 out = model(inp)
 print(out.shape)
