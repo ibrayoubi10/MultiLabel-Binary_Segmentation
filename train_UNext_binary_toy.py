@@ -12,6 +12,41 @@ from PIL import Image
 from networks.UNeXt.A1218_UNeXt_binary_base import UNext
 from metrics.binary_metrics import compute_binary_metrics
 
+def estimate_pos_weight_from_loader(loader, device="cpu", max_batches: int = 10) -> torch.Tensor:
+    """
+    Estime pos_weight = (#neg / #pos) sur quelques batches du loader train.
+    Retourne un tensor shape (1,) sur device.
+    """
+    pos = 0.0
+    neg = 0.0
+    seen = 0
+
+    for imgs, masks, _ in loader:
+        masks = masks.to(device, non_blocking=True)
+        # masks: (B,1,H,W) in {0,1}
+        pos += masks.sum().item()
+        neg += (1.0 - masks).sum().item()
+        seen += 1
+        if seen >= max_batches:
+            break
+
+    # sécurité
+    pos = max(pos, 1.0)
+    w = neg / pos
+    return torch.tensor([w], device=device)
+
+
+@torch.no_grad()
+def batch_stats_from_logits(logits: torch.Tensor, masks: torch.Tensor, threshold: float = 0.5):
+    probs = torch.sigmoid(logits)
+    pred = (probs > threshold).float()
+    return {
+        "mask_pos_ratio": float(masks.mean().item()),
+        "pred_pos_ratio": float(pred.mean().item()),
+        "probs_min": float(probs.min().item()),
+        "probs_mean": float(probs.mean().item()),
+        "probs_max": float(probs.max().item()),
+    }
 
 # -------------------------
 # Config
@@ -146,9 +181,8 @@ def pick_main_logits(model_out) -> torch.Tensor:
 # -------------------------
 # Train / Eval loops
 # -------------------------
-def train_one_epoch(model, loader, optimizer, device) -> float:
+def train_one_epoch(model, loader, optimizer, device, bce_loss: nn.Module) -> float:
     model.train()
-    bce = nn.BCEWithLogitsLoss()
     dice = SoftDiceLoss()
 
     total = 0.0
@@ -163,8 +197,7 @@ def train_one_epoch(model, loader, optimizer, device) -> float:
         out = model(imgs)
         logits = pick_main_logits(out)
 
-        # Loss = BCE(logits) + Dice(sigmoid(logits))
-        loss_bce = bce(logits, masks)
+        loss_bce = bce_loss(logits, masks)
         probs = torch.sigmoid(logits)
         loss_dice = dice(probs, masks)
         loss = loss_bce + loss_dice
@@ -178,11 +211,10 @@ def train_one_epoch(model, loader, optimizer, device) -> float:
 
     return total / max(n, 1)
 
-
 @torch.no_grad()
-def evaluate(model, loader, device, threshold: float = 0.5) -> dict:
+@torch.no_grad()
+def evaluate(model, loader, device, bce_loss: nn.Module, threshold: float = 0.5) -> dict:
     model.eval()
-    bce = nn.BCEWithLogitsLoss()
     dice_loss = SoftDiceLoss()
 
     total_loss = 0.0
@@ -192,23 +224,19 @@ def evaluate(model, loader, device, threshold: float = 0.5) -> dict:
     total_iou = 0.0
     n = 0
 
+    first_batch_stats = None
+
     for imgs, masks, _ in loader:
         imgs = imgs.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
 
         out = model(imgs)
         logits = pick_main_logits(out)
-        
-        if n == 0:  # first batch only
-            print("logits shape:", logits.shape)
-            probs = torch.sigmoid(logits)
-            pred = (probs > 0.5).float()
-            print("mask pos ratio:", masks.mean().item())
-            print("pred pos ratio:", pred.mean().item())
-            print("probs min/mean/max:",
-                probs.min().item(), probs.mean().item(), probs.max().item())
 
-        loss_bce = bce(logits, masks)
+        if first_batch_stats is None:
+            first_batch_stats = batch_stats_from_logits(logits, masks, threshold=threshold)
+
+        loss_bce = bce_loss(logits, masks)
         probs = torch.sigmoid(logits)
         loss_d = dice_loss(probs, masks)
         loss = loss_bce + loss_d
@@ -224,22 +252,17 @@ def evaluate(model, loader, device, threshold: float = 0.5) -> dict:
         n += bs
 
     n = max(n, 1)
-    if n == 0:  # first batch only
-        print("logits shape:", logits.shape)
-        probs = torch.sigmoid(logits)
-        pred = (probs > 0.5).float()
-        print("mask pos ratio:", masks.mean().item())
-        print("pred pos ratio:", pred.mean().item())
-        print("probs min/mean/max:",
-            probs.min().item(), probs.mean().item(), probs.max().item())
-
-    return {
+    out = {
         "loss": total_loss / n,
         "bce": total_bce / n,
         "dice_loss": total_dice_loss / n,
         "dice": total_dice / n,
         "iou": total_iou / n,
     }
+    if first_batch_stats is not None:
+        out.update({f"dbg_{k}": v for k, v in first_batch_stats.items()})
+    return out
+
 
 
 def save_ckpt(path: str, model, optimizer, epoch: int, best_metric: float):
@@ -296,6 +319,11 @@ def run():
         drop_last=False,
     )
 
+    pos_weight = estimate_pos_weight_from_loader(train_dl, device=device, max_batches=10)
+    print("Estimated pos_weight (neg/pos):", float(pos_weight.item()))
+
+    bce_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
     # Model
     model = UNext(num_classes=1, input_channels=3, deep_supervision=cfg.deep_supervision).to(device)
 
@@ -312,8 +340,8 @@ def run():
     print(f"Output: {cfg.out_dir}")
 
     for epoch in range(1, cfg.epochs + 1):
-        tr_loss = train_one_epoch(model, train_dl, optimizer, device)
-        val = evaluate(model, val_dl, device, threshold=cfg.threshold)
+        tr_loss = train_one_epoch(model, train_dl, optimizer, device, bce_loss=bce_loss)
+        val = evaluate(model, val_dl, device, bce_loss=bce_loss, threshold=cfg.threshold)
 
         # step scheduler on val dice
         scheduler.step(val["dice"])

@@ -15,7 +15,7 @@ from utils import *
 __all__ = ['UNext']
 
 import timm
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.layers import DropPath, to_2tuple, trunc_normal_
 import types
 import math
 from abc import ABCMeta, abstractmethod
