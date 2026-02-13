@@ -28,8 +28,8 @@ class CFG:
     seed: int = 42
 
     # train
-    epochs: int = 30
-    batch_size: int = 8
+    epochs: int = 10
+    batch_size: int = 3
     lr: float = 1e-4
     weight_decay: float = 1e-4
     num_workers: int = 2
@@ -198,6 +198,15 @@ def evaluate(model, loader, device, threshold: float = 0.5) -> dict:
 
         out = model(imgs)
         logits = pick_main_logits(out)
+        
+        if n == 0:  # first batch only
+            print("logits shape:", logits.shape)
+            probs = torch.sigmoid(logits)
+            pred = (probs > 0.5).float()
+            print("mask pos ratio:", masks.mean().item())
+            print("pred pos ratio:", pred.mean().item())
+            print("probs min/mean/max:",
+                probs.min().item(), probs.mean().item(), probs.max().item())
 
         loss_bce = bce(logits, masks)
         probs = torch.sigmoid(logits)
@@ -215,6 +224,15 @@ def evaluate(model, loader, device, threshold: float = 0.5) -> dict:
         n += bs
 
     n = max(n, 1)
+    if n == 0:  # first batch only
+        print("logits shape:", logits.shape)
+        probs = torch.sigmoid(logits)
+        pred = (probs > 0.5).float()
+        print("mask pos ratio:", masks.mean().item())
+        print("pred pos ratio:", pred.mean().item())
+        print("probs min/mean/max:",
+            probs.min().item(), probs.mean().item(), probs.max().item())
+
     return {
         "loss": total_loss / n,
         "bce": total_bce / n,
